@@ -1,23 +1,43 @@
-"""Hand-written subset of `animus-subject-protocol` wire types.
+"""Subject wire types.
 
-TODO(codegen): replace when datamodel-codegen pipeline lands. Mirrors the
-Rust source-of-truth in `crates/animus-subject-protocol/src/lib.rs`. The
-intentionally permissive shape (extra fields allowed, unknown statuses
-round-trip as strings) is the Python equivalent of the Rust `Other(String)`
-enum pattern used to keep plugins forward-compatible with new daemon
-versions.
+The exact wire shapes are generated from the Rust ``animus-subject-protocol``
+schema (regenerate via ``python scripts/codegen.py``) and reachable via
+``animus_plugin_sdk.subject.gen`` (or ``animus_plugin_sdk.types.generated.subject``).
+
+The names exported here (``Subject``, ``SubjectListParams``,
+``SubjectListResult``, ``SubjectPatch``, ``SubjectCreateRequest``) are
+**author-ergonomic** wrappers. They share the generated wire shapes but keep the
+wire-mandatory fields (``status`` / ``created_at`` / ``updated_at`` on a subject,
+``fetched_at`` on a list) optional with sensible defaults, so historical sparse
+construction — ``Subject(id=..., kind=..., title=...)`` — keeps working. The SDK
+backfills any omitted wire-mandatory fields on the way out (see
+``dispatch.subject.ensure_wire_subject``).
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# `Literal` is used for static type narrowing; raw string is accepted at
-# runtime because we set `extra="allow"` and validators are permissive.
-# TODO(codegen): replace when datamodel-codegen pipeline lands.
-SubjectStatus = Literal["ready", "in-progress", "blocked", "done", "cancelled"]
+# The generated wire types (exact Rust shape). Re-exported under explicit names
+# for advanced authors who want the strict shape.
+from .generated.subject import Subject as WireSubject
+from .generated.subject import SubjectFilter as SubjectListParams
+from .generated.subject import SubjectList as WireSubjectList
+from .generated.subject import SubjectPatch as SubjectPatch
+from .generated.subject import SubjectStatus as SubjectStatus
+
+__all__ = [
+    "Subject",
+    "SubjectCreateRequest",
+    "SubjectListParams",
+    "SubjectListResult",
+    "SubjectPatch",
+    "SubjectStatus",
+    "WireSubject",
+    "WireSubjectList",
+]
 
 
 class _PermissiveModel(BaseModel):
@@ -25,14 +45,12 @@ class _PermissiveModel(BaseModel):
 
 
 class Subject(_PermissiveModel):
-    """A single subject record returned by a subject backend.
+    """A single subject record.
 
-    Wire-required fields (per Rust `Subject`):
-      - id, kind, title, status, created_at, updated_at
-
-    The SDK auto-fills missing `status`/`created_at`/`updated_at` for hello-
-    world demos, but production backends should set them explicitly.
-    TODO(codegen): replace when datamodel-codegen pipeline lands.
+    Same fields as the generated wire ``Subject``, but the wire-mandatory
+    ``status`` / ``created_at`` / ``updated_at`` are kept optional (with
+    defaults) for author ergonomics — the SDK backfills them on the wire when an
+    author omits them in a sparse / hello-world example.
     """
 
     id: str
@@ -45,25 +63,21 @@ class Subject(_PermissiveModel):
     priority: int | None = None
     assignee: str | None = None
     labels: list[str] = Field(default_factory=list)
+    native_status: str | None = None
+    parent: str | None = None
+    children: list[str] = Field(default_factory=list)
+    attachments: list[Any] = Field(default_factory=list)
+    status_metadata: Any | None = None
     url: str | None = None
     custom: dict[str, Any] = Field(default_factory=dict)
 
 
-class SubjectListParams(_PermissiveModel):
-    """Mirrors Rust `SubjectFilter`. TODO(codegen): replace when codegen lands."""
-
-    status: list[str] | None = None
-    kind: list[str] | None = None
-    assignee: list[str] | None = None
-    labels_any: list[str] | None = None
-    labels_all: list[str] | None = None
-    updated_since: str | None = None
-    cursor: str | None = None
-    limit: int | None = None
-
-
 class SubjectListResult(_PermissiveModel):
-    """Mirrors Rust `SubjectList`. TODO(codegen): replace when codegen lands."""
+    """Result of ``subject/list``.
+
+    Mirrors the generated ``SubjectList`` but keeps ``fetched_at`` optional so
+    authors can omit it (the SDK fills it on the wire).
+    """
 
     subjects: list[Subject] = Field(default_factory=list)
     next_cursor: str | None = None
@@ -71,7 +85,11 @@ class SubjectListResult(_PermissiveModel):
 
 
 class SubjectCreateRequest(_PermissiveModel):
-    """Mirrors Rust `SubjectCreateRequest`. TODO(codegen): replace when codegen lands."""
+    """Author-ergonomic shape of ``subject/create`` params.
+
+    The host serializes top-level keys for ``subject/create``; this mirrors the
+    Rust ``SubjectCreateRequest`` for typed author call sites.
+    """
 
     kind: str
     title: str
@@ -83,29 +101,3 @@ class SubjectCreateRequest(_PermissiveModel):
     parent: str | None = None
     url: str | None = None
     custom: dict[str, Any] = Field(default_factory=dict)
-
-
-class SubjectPatch(_PermissiveModel):
-    """Mirrors Rust `SubjectPatch`. Tri-state `assignee`: missing = no change,
-    explicit `null` = clear, string = set.
-
-    Labels split into add/remove to avoid lost-write races.
-    TODO(codegen): replace when datamodel-codegen pipeline lands.
-    """
-
-    status: str | None = None
-    assignee: str | None = None
-    labels_add: list[str] = Field(default_factory=list)
-    labels_remove: list[str] = Field(default_factory=list)
-    comment: str | None = None
-    custom: dict[str, Any] = Field(default_factory=dict)
-
-
-__all__ = [
-    "Subject",
-    "SubjectCreateRequest",
-    "SubjectListParams",
-    "SubjectListResult",
-    "SubjectPatch",
-    "SubjectStatus",
-]

@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "animus-plugin-sdk"
-version = "0.1.0"
-description = "Python SDK for authoring Animus stdio plugins (subject backends, providers, triggers, transports, log storage)."
+version = "0.2.0"
+description = "Python SDK for authoring Animus plugins. Pydantic-typed, Rust protocol is the source of truth. Covers subject, provider, trigger, transport, log-storage, queue, workflow-runner, durable-store, memory-store, and notifier roles."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Elastic-2.0" }
@@ -47,6 +47,8 @@ packages = ["animus_plugin_sdk"]
 [tool.hatch.build.targets.sdist]
 include = [
   "animus_plugin_sdk",
+  "schemas",
+  "scripts",
   "tests",
   "README.md",
   "pyproject.toml",
@@ -66,6 +68,10 @@ disallow_untyped_defs = false
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Generated pydantic models are byte-for-byte owned by scripts/codegen.py; the
+# codegen drift check is the source of truth for their formatting. Excluding
+# them keeps `ruff format` from rewriting them out of sync with the emitter.
+extend-exclude = ["animus_plugin_sdk/types/generated"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]

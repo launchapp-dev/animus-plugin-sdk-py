@@ -1,30 +1,78 @@
-"""Hand-written subset of `animus-plugin-protocol` wire types.
+"""Base / runtime protocol layer.
 
-TODO(codegen): replace when datamodel-codegen pipeline lands. These models
-mirror the Rust source-of-truth in `crates/animus-plugin-protocol/src/lib.rs`
-and the JSON Schema artifacts at
-`schemas/animus-plugin-protocol/_all.json`. They are the minimum required
-for the skeleton to compile, validate handshake payloads, and pass
-unknown-variant strings through (the Python equivalent of Rust's
-`Other(String)` pattern is `pydantic.BaseModel` + permissive string fields).
+The wire-shape payload types (``PluginManifest``, ``PluginCapabilities``,
+``InitializeParams``, ``InitializeResult``, ``HealthCheckResult``, …) are
+re-exported from the generated pydantic module
+(``animus_plugin_sdk.types.generated.plugin``) — the Rust protocol crates are
+the single source of truth; regenerate via ``python scripts/codegen.py``.
+
+This module adds the hand-maintained constants (``PROTOCOL_VERSION``,
+``PluginKind``, ``ErrorCode``) and the JSON-RPC *envelope* types
+(``RpcRequest`` / ``RpcNotification`` / ``RpcResponse`` / ``RpcError``), which
+are transport contracts rather than domain payloads: the transport relies on
+``jsonrpc`` defaulting to ``"2.0"`` and on distinguishing missing-``id`` from
+explicit-``null`` via ``model_fields_set`` — neither of which the generated
+permissive models guarantee. Their structural shape matches the generated
+schema exactly.
 """
 
 from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
-PROTOCOL_VERSION: Literal["1.0.0"] = "1.0.0"
-"""Protocol version this SDK was built against. Match TS SDK exactly."""
+# Re-export the generated wire-payload types so authors/handshake source the
+# Rust-derived shapes. Aliased to the SDK's historical names where they differ.
+from .generated.plugin import (
+    EnvRequirement as EnvRequirement,
+)
+from .generated.plugin import (
+    HealthCheckResult as HealthCheckResult,
+)
+from .generated.plugin import (
+    HostCapabilities as HostCapabilities,
+)
+from .generated.plugin import (
+    HostInfo as HostInfo,
+)
+from .generated.plugin import (
+    InitializeParams as InitializeParams,
+)
+from .generated.plugin import (
+    InitializeResult as InitializeResult,
+)
+from .generated.plugin import (
+    KindCapability as KindCapability,
+)
+from .generated.plugin import (
+    McpTool as McpTool,
+)
+from .generated.plugin import (
+    PluginCapabilities as PluginCapabilities,
+)
+from .generated.plugin import (
+    PluginInfo as PluginInfo,
+)
+from .generated.plugin import (
+    PluginManifest as PluginManifest,
+)
+
+PROTOCOL_VERSION: Literal["1.1.0"] = "1.1.0"
+"""Protocol version this SDK was built against. Mirrors the Rust
+`PROTOCOL_VERSION` constant in `animus-plugin-protocol`. Match the TS SDK."""
 
 
 PluginKindString = str
 """Plugin kind discriminator (kept as a string so unknown kinds round-trip)."""
 
 
+HealthStatus = Literal["healthy", "degraded", "unhealthy"]
+"""Health status emitted by `health/check`."""
+
+
 class PluginKind:
-    """Plugin kind constants (mirror Rust `PLUGIN_KIND_*`)."""
+    """Plugin kind constants (mirror Rust `PLUGIN_KIND_*` + the TS `PluginKind`)."""
 
     PROVIDER: PluginKindString = "provider"
     SUBJECT_BACKEND: PluginKindString = "subject_backend"
@@ -32,6 +80,12 @@ class PluginKind:
     TRIGGER_BACKEND: PluginKindString = "trigger_backend"
     LOG_STORAGE_BACKEND: PluginKindString = "log_storage_backend"
     TRANSPORT_BACKEND: PluginKindString = "transport_backend"
+    # v1.1.0 additive kinds.
+    WORKFLOW_RUNNER: PluginKindString = "workflow_runner"
+    QUEUE: PluginKindString = "queue"
+    DURABLE_STORE: PluginKindString = "durable_store"
+    MEMORY_STORE: PluginKindString = "memory_store"
+    NOTIFIER: PluginKindString = "notifier"
     CUSTOM: PluginKindString = "custom"
 
     ALL: frozenset[str] = frozenset(
@@ -42,36 +96,50 @@ class PluginKind:
             "trigger_backend",
             "log_storage_backend",
             "transport_backend",
+            "workflow_runner",
+            "queue",
+            "durable_store",
+            "memory_store",
+            "notifier",
             "custom",
         }
     )
 
 
 class ErrorCode:
-    """JSON-RPC 2.0 standard + Animus-specific error codes."""
+    """JSON-RPC 2.0 standard + Animus-specific error codes (spec §4)."""
 
     PARSE_ERROR: int = -32700
     INVALID_REQUEST: int = -32600
     METHOD_NOT_FOUND: int = -32601
     INVALID_PARAMS: int = -32602
     INTERNAL_ERROR: int = -32603
+    # Domain method received before `initialize` completed.
+    PLUGIN_NOT_INITIALIZED: int = -32000
+    # Method is recognized but not implemented (host should fall back).
+    METHOD_NOT_SUPPORTED: int = -32001
+    # Host cancelled the request via `$/cancelRequest`.
+    REQUEST_CANCELLED: int = -32002
+    # Request did not complete within the host-imposed timeout.
+    TIMEOUT: int = -32003
+    # Animus-specific: plugin shutting down.
     SERVER_SHUTDOWN: int = -32099
 
 
-# JSON-RPC 2.0 frame types ----------------------------------------------------
+# JSON-RPC 2.0 envelope types ------------------------------------------------
 
 RpcId = str | int | None
 """JSON-RPC 2.0 request id — per spec a string, number, or null."""
 
 
-class _PermissiveModel(BaseModel):
-    """Base for wire types — extra fields preserved (forward compat)."""
+class _EnvelopeModel(BaseModel):
+    """Base for the JSON-RPC envelope types — extra fields preserved."""
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
 
-class RpcRequest(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
+class RpcRequest(_EnvelopeModel):
+    """A JSON-RPC 2.0 request frame (transport envelope)."""
 
     jsonrpc: Literal["2.0"] = "2.0"
     method: str
@@ -79,126 +147,29 @@ class RpcRequest(_PermissiveModel):
     params: Any | None = None
 
 
-class RpcNotification(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
+class RpcNotification(_EnvelopeModel):
+    """A JSON-RPC 2.0 notification frame (transport envelope)."""
 
     jsonrpc: Literal["2.0"] = "2.0"
     method: str
     params: Any | None = None
 
 
-class RpcError(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
+class RpcError(_EnvelopeModel):
+    """JSON-RPC 2.0 error payload (transport envelope)."""
 
     code: int
     message: str
     data: Any | None = None
 
 
-class RpcResponse(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
+class RpcResponse(_EnvelopeModel):
+    """A JSON-RPC 2.0 response frame (transport envelope)."""
 
     jsonrpc: Literal["2.0"] = "2.0"
     id: RpcId = None
     result: Any | None = None
     error: RpcError | None = None
-
-
-# Plugin protocol payloads -----------------------------------------------------
-
-
-class EnvRequirement(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
-
-    name: str
-    description: str | None = None
-    required: bool = True
-    sensitive: bool = False
-
-
-class McpTool(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
-
-    name: str
-    description: str | None = None
-    input_schema: Any | None = None
-
-
-class PluginCapabilities(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
-
-    methods: list[str] = Field(default_factory=list)
-    streaming: bool = False
-    progress: bool = False
-    cancellation: bool = False
-    projections: list[str] = Field(default_factory=list)
-    subject_kinds: list[str] = Field(default_factory=list)
-    mcp_tools: list[McpTool] = Field(default_factory=list)
-
-
-class HostCapabilities(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
-
-    streaming: bool = False
-    progress: bool = False
-    cancellation: bool = False
-
-
-class HostInfo(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
-
-    name: str
-    version: str
-
-
-class PluginInfo(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
-
-    name: str
-    version: str
-    plugin_kind: PluginKindString
-    description: str | None = None
-
-
-class PluginManifest(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
-
-    name: str
-    version: str
-    plugin_kind: PluginKindString
-    description: str
-    protocol_version: str
-    capabilities: list[str] = Field(default_factory=list)
-    env_required: list[EnvRequirement] = Field(default_factory=list)
-    notification_buffer_size: int | None = None
-
-
-class InitializeParams(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
-
-    protocol_version: str
-    host_info: HostInfo
-    capabilities: HostCapabilities = Field(default_factory=HostCapabilities)
-
-
-class InitializeResult(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
-
-    protocol_version: str
-    plugin_info: PluginInfo
-    capabilities: PluginCapabilities = Field(default_factory=PluginCapabilities)
-
-
-HealthStatus = Literal["healthy", "degraded", "unhealthy"]
-
-
-class HealthCheckResult(_PermissiveModel):
-    """TODO(codegen): replace when datamodel-codegen pipeline lands."""
-
-    status: HealthStatus = "healthy"
-    uptime_ms: int | None = None
-    memory_usage_bytes: int | None = None
-    last_error: str | None = None
 
 
 __all__ = [
@@ -211,6 +182,7 @@ __all__ = [
     "HostInfo",
     "InitializeParams",
     "InitializeResult",
+    "KindCapability",
     "McpTool",
     "PluginCapabilities",
     "PluginInfo",

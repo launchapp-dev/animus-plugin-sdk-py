@@ -1,9 +1,19 @@
 """Public API for `animus-plugin-sdk`.
 
-Re-exports the small set of entrypoints plugin authors should reach for.
-The internal wire and handshake helpers are also exported for advanced
-and test use, but are documented as low-level.
+This is the back-compat top-level surface: the `define_plugin` entrypoint, the
+base/runtime layer, and every role contract. Role-specific generated pydantic
+types + contracts are ALSO importable per role:
+
+    from animus_plugin_sdk.subject import SubjectBackend, gen as subject_types
+    from animus_plugin_sdk.provider import Provider, AgentRunRequest
+    from animus_plugin_sdk.trigger import TriggerBackend, TriggerEvent
+    ... and `.transport`, `.log_storage`, `.queue`, `.workflow_runner`,
+        `.durable_store`, `.memory_store`, `.notifier`.
+
+The internal wire and handshake helpers are also exported for advanced/test use.
 """
+
+from __future__ import annotations
 
 from .handshake import (
     PluginIdentity,
@@ -11,19 +21,28 @@ from .handshake import (
     build_manifest,
     validate_initialize_params,
 )
-from .plugin import PluginHandle, PluginSpec, define_plugin
+from .plugin import PluginHandle, PluginSpec, define_plugin, ensure_wire_subject
 from .roles import (
+    AgentRunRequest,
+    AgentRunResponse,
+    AgentStream,
     CallContext,
+    DurableStore,
     HealthReport,
     LogStorageBackend,
+    MemoryStore,
+    Notifier,
     Provider,
+    ProviderCallContext,
     ProviderRunParams,
     ProviderRunResult,
+    Queue,
     SubjectBackend,
     SubjectCallContext,
     TransportBackend,
     TriggerBackend,
     TriggerEvent,
+    WorkflowRunner,
 )
 from .types import (
     PROTOCOL_VERSION,
@@ -62,11 +81,16 @@ from .wire import (
     parse_frame,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
+
 
 __all__ = [
     "PROTOCOL_VERSION",
+    "AgentRunRequest",
+    "AgentRunResponse",
+    "AgentStream",
     "CallContext",
+    "DurableStore",
     "EnvRequirement",
     "ErrorCode",
     "HealthCheckResult",
@@ -78,6 +102,8 @@ __all__ = [
     "InitializeResult",
     "LogStorageBackend",
     "McpTool",
+    "MemoryStore",
+    "Notifier",
     "PluginCapabilities",
     "PluginHandle",
     "PluginIdentity",
@@ -87,8 +113,10 @@ __all__ = [
     "PluginManifest",
     "PluginSpec",
     "Provider",
+    "ProviderCallContext",
     "ProviderRunParams",
     "ProviderRunResult",
+    "Queue",
     "RpcError",
     "RpcId",
     "RpcNotification",
@@ -106,12 +134,14 @@ __all__ = [
     "TriggerBackend",
     "TriggerEvent",
     "Wire",
+    "WorkflowRunner",
     "__version__",
     "build_initialize_result",
     "build_manifest",
     "create_wire",
     "define_plugin",
     "encode_frame",
+    "ensure_wire_subject",
     "error_response",
     "ok_response",
     "parse_frame",

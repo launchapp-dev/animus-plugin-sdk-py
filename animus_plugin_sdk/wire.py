@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import IO, Any
 
 from .types import ErrorCode, RpcError, RpcId, RpcNotification, RpcRequest, RpcResponse
@@ -129,24 +130,63 @@ def error_response(
 
 @dataclass
 class Wire:
-    """A bound stdio wire for sending frames + driving a read loop."""
+    """A bound stdio wire for sending frames + driving a read loop.
+
+    Streaming roles (trigger/watch, log_storage/tail) drain an author iterator
+    on a background thread and emit notifications while the main loop continues
+    to read frames. `_write_lock` guards every stdout frame so a background
+    thread's notification never interleaves bytes with the main thread's
+    response — each frame is written + flushed atomically.
+    """
 
     input: IO[str]
     output: IO[str]
     logger: Logger = _default_logger
+    _write_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    # Bounded out-of-band worker threads (detached provider `agent/run`/`resume`)
+    # that own sending their own final response. `run()` joins these at EOF so a
+    # run started just before stream close still flushes its final reply. Guarded
+    # by `_pending_lock`. (Trigger/log-storage watch loops are unbounded and stay
+    # as fire-and-forget daemon threads — they are NOT tracked here.)
+    _pending: list[threading.Thread] = field(default_factory=list, repr=False)
+    _pending_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def send_response(self, response: RpcResponse) -> None:
-        self.output.write(encode_frame(response))
-        self.output.flush()
+        with self._write_lock:
+            self.output.write(encode_frame(response))
+            self.output.flush()
 
     def send_notification(self, notification: RpcNotification) -> None:
-        self.output.write(encode_frame(notification))
-        self.output.flush()
+        with self._write_lock:
+            self.output.write(encode_frame(notification))
+            self.output.flush()
 
     def notify(self, method: str, params: Any | None = None) -> None:
         """Convenience: build + send a notification from method/params."""
         frame = RpcNotification(jsonrpc="2.0", method=method, params=params)
         self.send_notification(frame)
+
+    def track_worker(self, thread: threading.Thread) -> None:
+        """Register a bounded background worker thread (a detached provider run).
+
+        `run()` joins all registered workers at EOF so their final responses are
+        flushed before the loop returns. The thread should already be started.
+        """
+        with self._pending_lock:
+            self._pending.append(thread)
+
+    def _join_workers(self) -> None:
+        # Drain bounded workers. A settling run cannot register new workers
+        # (run/resume only spawn from the inbound loop, which has ended), so a
+        # single snapshot-and-join pass suffices; loop defensively regardless.
+        while True:
+            with self._pending_lock:
+                pending = [t for t in self._pending if t.is_alive()]
+                self._pending = pending
+                if not pending:
+                    return
+            for thread in pending:
+                thread.join()
 
     def run(self, handler: FrameHandler) -> None:
         """Begin consuming the input stream until EOF.
@@ -154,8 +194,11 @@ class Wire:
         Frames that fail to parse are logged via `self.logger` and skipped,
         matching the Rust runtime's "tracing::warn + continue" behavior.
         """
-        for line in self.input:
-            self._dispatch_line(line, handler)
+        try:
+            for line in self.input:
+                self._dispatch_line(line, handler)
+        finally:
+            self._join_workers()
 
     # Internal helper extracted for unit testing.
     def _dispatch_line(self, line: str, handler: FrameHandler) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from animus_plugin_sdk import (
     PROTOCOL_VERSION,
     EnvRequirement,
+    HostCapabilities,
     HostInfo,
     InitializeParams,
     PluginCapabilities,
@@ -66,6 +67,7 @@ def test_validate_initialize_params_accepts_matching_major() -> None:
     params = InitializeParams(
         protocol_version="1.0.0",
         host_info=HostInfo(name="animus", version="0.4.14"),
+        capabilities=HostCapabilities(),
     )
     assert validate_initialize_params(params) is None
 
@@ -74,6 +76,7 @@ def test_validate_initialize_params_accepts_minor_drift_within_major() -> None:
     params = InitializeParams(
         protocol_version="1.42.99",
         host_info=HostInfo(name="animus", version="0.4.14"),
+        capabilities=HostCapabilities(),
     )
     assert validate_initialize_params(params) is None
 
@@ -82,6 +85,7 @@ def test_validate_initialize_params_rejects_major_mismatch() -> None:
     params = InitializeParams(
         protocol_version="2.0.0",
         host_info=HostInfo(name="animus", version="0.4.14"),
+        capabilities=HostCapabilities(),
     )
     msg = validate_initialize_params(params)
     assert msg is not None

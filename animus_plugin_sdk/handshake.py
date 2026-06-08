@@ -10,6 +10,7 @@ codegen-generated types in a follow-up pass (see
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from .types import (
     PROTOCOL_VERSION,
@@ -56,6 +57,15 @@ def build_manifest(
         if c not in seen:
             seen.add(c)
             merged.append(c)
+    # The generated `EnvRequirement.required` defaults to None (dropped from the
+    # manifest by `exclude_none`). Preserve the historical public-API default of
+    # `required=True` for any entry that left it unset — at the manifest boundary
+    # so direct `build_manifest` callers benefit too, not just `define_plugin`.
+    normalized_env: list[EnvRequirement] = []
+    for entry in env_required or []:
+        if getattr(entry, "required", None) is None:
+            entry = entry.model_copy(update={"required": True})
+        normalized_env.append(entry)
     return PluginManifest(
         name=identity.name,
         version=identity.version,
@@ -63,7 +73,7 @@ def build_manifest(
         description=identity.description,
         protocol_version=PROTOCOL_VERSION,
         capabilities=merged,
-        env_required=list(env_required or []),
+        env_required=normalized_env,
         notification_buffer_size=notification_buffer_size,
     )
 
@@ -71,9 +81,15 @@ def build_manifest(
 def build_initialize_result(
     identity: PluginIdentity,
     capabilities: PluginCapabilities,
+    kind_capabilities: dict[str, Any] | None = None,
 ) -> InitializeResult:
-    """Build the `initialize` reply payload."""
-    return InitializeResult(
+    """Build the `initialize` reply payload.
+
+    `kind_capabilities` (v1.1.0+) carries the per-kind protocol crate version
+    for the new kinds. v1.0.0 kinds pass `None`/empty so the wire output stays
+    byte-identical to the pre-v1.1.0 shape.
+    """
+    result = InitializeResult(
         protocol_version=PROTOCOL_VERSION,
         plugin_info=PluginInfo(
             name=identity.name,
@@ -82,7 +98,9 @@ def build_initialize_result(
             description=identity.description,
         ),
         capabilities=capabilities,
+        kind_capabilities=dict(kind_capabilities) if kind_capabilities else {},
     )
+    return result
 
 
 def validate_initialize_params(params: InitializeParams) -> str | None:

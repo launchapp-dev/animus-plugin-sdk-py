@@ -105,15 +105,14 @@ def test_define_plugin_requires_subject_backend_methods() -> None:
         )
 
 
-def test_define_plugin_rejects_unwired_kinds() -> None:
-    class Stub:
-        def run_agent(self, *_args, **_kwargs):
-            raise NotImplementedError
+def test_define_plugin_requires_provider_run_method() -> None:
+    class Bad:
+        pass
 
-    with pytest.raises(ValueError, match="not yet wired"):
+    with pytest.raises(TypeError, match="run"):
         define_plugin(
             kind=PluginKind.PROVIDER,
-            impl=Stub(),
+            impl=Bad(),
             name="prov",
             version="0.1.0",
             description="stub",
