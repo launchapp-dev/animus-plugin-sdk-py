@@ -355,13 +355,15 @@ def dispatch_provider(
             if method == PROVIDER_METHODS["resume"] and not callable(resume_fn):
                 return method_not_supported(request_id, method)
             run_request = validate_params(request_id, AgentRunRequest, frame.params)
-            # TODO(codex-p2): `agent/resume` shares `AgentRunRequest` with
-            # `agent/run`, so a resume that omits `session_id` is accepted and the
-            # impl is handed an empty id. Spec §7.2 says resume carries
-            # `session_id` "set". Rejecting an unset id here is a pre-existing
-            # behavior change orthogonal to the concurrency fix and could regress
-            # lenient providers / conformance fixtures, so it is deferred to a
-            # focused follow-up rather than bundled into this change.
+            # Spec §7.2: `agent/resume` "Resumes a prior session ... with
+            # `session_id` set." A resume without a session id has nothing to
+            # resume, so reject it rather than handing the impl an empty id.
+            if method == PROVIDER_METHODS["resume"] and not run_request.session_id:
+                return error_response(
+                    request_id,
+                    ErrorCode.INVALID_PARAMS,
+                    "agent/resume requires a non-empty session_id",
+                )
             call = impl.run if method == PROVIDER_METHODS["run"] else resume_fn
             _run_detached(request_id, wire, registry, call, run_request)
             return None  # detached; final response sent later via send_response

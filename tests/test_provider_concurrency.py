@@ -291,3 +291,37 @@ def test_provider_advertises_cancellation_capability() -> None:
     init_reply = _by_id(frames, 1)
     assert init_reply is not None
     assert init_reply["result"]["capabilities"]["cancellation"] is True
+
+
+def test_resume_without_session_id_is_rejected() -> None:
+    # Spec §7.2: agent/resume resumes a prior session and carries session_id.
+    # A resume with no session id has nothing to resume -> invalid_params, and
+    # the impl's resume() must not be invoked.
+    class _ResumableProvider:
+        def __init__(self) -> None:
+            self.resume_called = False
+
+        def run(self, params: Any, ctx: Any) -> dict[str, Any]:
+            return _final("sess-x")
+
+        def resume(self, params: Any, ctx: Any) -> dict[str, Any]:
+            self.resume_called = True
+            return _final("sess-x")
+
+    impl = _ResumableProvider()
+    frames = drive(
+        dict(kind="provider", impl=impl, name="p", version="0.1.0", description="d"),
+        [
+            INIT,
+            {
+                "jsonrpc": "2.0",
+                "id": 60,
+                "method": "agent/resume",
+                "params": {"prompt": "hi", "cwd": "/x"},
+            },
+        ],
+    )
+    reply = _by_id(frames, 60)
+    assert reply is not None
+    assert reply["error"]["code"] == -32602
+    assert impl.resume_called is False
