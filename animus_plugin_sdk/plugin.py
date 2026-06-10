@@ -358,14 +358,21 @@ def define_plugin(
     )
     capabilities_obj = _derive_capabilities(spec)
 
+    method_caps = list(capabilities_obj.methods or [])
+    advertised: list[str] = []
+    if spec.kind == PluginKind.TRANSPORT_BACKEND:
+        advertised.extend(spec.capabilities)
+    advertised.extend(spec.extra_capabilities)
+    for c in advertised:
+        if c not in method_caps:
+            method_caps.append(c)
+    capabilities_obj.methods = method_caps
+
     # Manifest-only capability tokens that aid host preflight without spawning.
     extra_caps: list[str] = []
     if spec.kind == PluginKind.SUBJECT_BACKEND:
         for k in spec.subject_kinds:
             extra_caps.append(f"subject_kind:{k}")
-    if spec.kind == PluginKind.TRANSPORT_BACKEND:
-        extra_caps.extend(spec.capabilities)
-    extra_caps.extend(spec.extra_capabilities)
 
     kind_capabilities = _derive_kind_capabilities(spec)
 
@@ -526,7 +533,8 @@ def _dispatch(
     if method == "shutdown":
         return ok_response(request_id, {})
     if method == "exit":
-        return ok_response(request_id, {})
+        wire.send_response(ok_response(request_id, {}))
+        sys.exit(0)
     return _dispatch_role(request_id, frame, wire, spec, provider_sessions)
 
 

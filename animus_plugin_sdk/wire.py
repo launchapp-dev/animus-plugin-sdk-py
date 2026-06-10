@@ -232,13 +232,35 @@ class Wire:
             self.send_response(response)
 
 
+def _force_utf8(stream: Any) -> None:
+    reconfigure = getattr(stream, "reconfigure", None)
+    if not callable(reconfigure):
+        return
+    encoding = (getattr(stream, "encoding", None) or "").replace("-", "").lower()
+    if encoding == "utf8":
+        return
+    try:
+        reconfigure(encoding="utf-8")
+    except (ValueError, OSError):
+        pass
+
+
 def create_wire(
     input: IO[str] | None = None,
     output: IO[str] | None = None,
     logger: Logger | None = None,
 ) -> Wire:
-    """Create a `Wire` bound to the given (or default stdin/stdout) streams."""
+    """Create a `Wire` bound to the given (or default stdin/stdout) streams.
+
+    The wire protocol is UTF-8 JSON; default stdio streams are reconfigured to
+    UTF-8 so a non-UTF-8 locale (e.g. a daemon spawn with `LANG` scrubbed or set
+    to a legacy codeset) cannot corrupt inbound frames.
+    """
     chosen_logger: Logger = logger if logger is not None else _default_logger
+    if input is None:
+        _force_utf8(sys.stdin)
+    if output is None:
+        _force_utf8(sys.stdout)
     return Wire(
         input=input if input is not None else sys.stdin,
         output=output if output is not None else sys.stdout,
